@@ -1,0 +1,10 @@
+{
+  "buildCommand": "npm run build:packages && npm run build --workspace=@betul/web",
+  "outputDirectory": "apps/web/dist",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
