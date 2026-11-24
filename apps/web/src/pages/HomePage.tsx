@@ -378,14 +378,21 @@ export function HomePage() {
             </div>
           </div>
           <div className="md:col-span-4 flex flex-col gap-3">
+            <a
+              href="/downloads/betul-district.apk"
+              download="betul-district.apk"
+              className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold text-center inline-flex items-center justify-center gap-2 transition shadow-xs"
+            >
+              <Download size={16} /> Download Android APK
+            </a>
             <Link
               to="/login/citizen"
-              className="w-full py-3 px-4 rounded-xl bg-[#0f2942] hover:bg-[#163a5f] text-white text-sm font-semibold text-center inline-flex items-center justify-center gap-2 transition"
+              className="w-full py-2.5 px-4 rounded-xl bg-[#0f2942] hover:bg-[#163a5f] text-white text-xs font-semibold text-center inline-flex items-center justify-center gap-2 transition"
             >
-              <Download size={16} /> Launch Mobile Citizen App
+              Open Mobile Web App
             </Link>
             <p className="text-[11px] text-center text-slate-500">
-              Android APK packaging guide included in <code>docs/deployment/ANDROID_APK.md</code>
+              Package ID: <code>in.gov.mp.betul.intelligence</code>
             </p>
           </div>
         </div>

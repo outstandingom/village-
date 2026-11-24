@@ -25,3 +25,10 @@ tmp/
 uploads/
 .DS_Store
 Thumbs.db
+
+# Android Gradle build artifacts & local paths
+apps/web/android/.gradle/
+apps/web/android/build/
+apps/web/android/app/build/
+apps/web/android/local.properties
+apps/web/android/capacitor-cordova-android-plugins/build/
