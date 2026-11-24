@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { AppShell } from './layouts/AppShell';
+import { HomePage } from './pages/HomePage';
 import { AuthPage } from './pages/AuthPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { PilotVillagesPage } from './pages/PilotVillagesPage';
@@ -31,7 +32,14 @@ function AppRoutes() {
   }
 
   if (!user) {
-    return <AuthPage />;
+    return (
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/login" element={<AuthPage defaultPortal="citizen" />} />
+        <Route path="/login/:portal" element={<AuthPage />} />
+        <Route path="*" element={<Navigate to="/" />} />
+      </Routes>
+    );
   }
 
   const isCitizen = user.role === 'citizen';

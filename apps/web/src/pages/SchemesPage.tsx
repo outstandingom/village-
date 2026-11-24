@@ -1,12 +1,73 @@
 import React, { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle, HelpCircle, Info, Sparkles } from 'lucide-react';
+import { CheckCircle, HelpCircle, Info, Mic, MicOff, Sparkles, Wand2 } from 'lucide-react';
 import type { CitizenProfile, SchemeApplication, SchemeMatchResult } from '@betul/shared-types';
+import { useAuth } from '../hooks/useAuth';
 import { apiRequest } from '../services/api';
 
+const SMART_PERSONAS = [
+  {
+    id: 'small-farmer',
+    label: 'Small Farmer (2 Acres • Kutcha House)',
+    desc: 'Auto-fills farmer, 2 acres land, BPL, kutcha house',
+    values: {
+      fullName: 'Ramesh Patel',
+      age: '42',
+      gender: 'male' as const,
+      occupation: 'farmer',
+      educationLevel: '10th',
+      annualIncomeBand: 'below_1L' as const,
+      landholdingAcres: '2',
+      housingStatus: 'kutcha' as const,
+      bplCardHolder: true,
+      seekingEmployment: false,
+    },
+  },
+  {
+    id: 'rural-woman',
+    label: 'Rural Woman / Homemaker (BPL)',
+    desc: 'Checks Ladli Behna, Ujjwala LPG & Ayushman Bharat',
+    values: {
+      fullName: 'Meera Bai',
+      age: '31',
+      gender: 'female' as const,
+      occupation: 'homemaker',
+      educationLevel: '10th',
+      annualIncomeBand: 'below_1L' as const,
+      landholdingAcres: '0',
+      housingStatus: 'kutcha' as const,
+      bplCardHolder: true,
+      seekingEmployment: false,
+    },
+  },
+  {
+    id: 'graduate-youth',
+    label: 'Graduate Youth Seeking Job',
+    desc: 'Checks Seekho Kamao Yojana & skill stipends',
+    values: {
+      fullName: 'Amit Verma',
+      age: '23',
+      gender: 'male' as const,
+      occupation: 'student',
+      educationLevel: 'graduate',
+      annualIncomeBand: '1L_to_2_5L' as const,
+      landholdingAcres: '0',
+      housingStatus: 'semi_pucca' as const,
+      bplCardHolder: false,
+      seekingEmployment: true,
+    },
+  },
+];
+
 export function SchemesPage() {
+  const { lang } = useAuth();
   const qc = useQueryClient();
-  const [fullName, setFullName] = useState('');
+
+  const [smartText, setSmartText] = useState('');
+  const [listening, setListening] = useState(false);
+  const [smartHint, setSmartHint] = useState<string | null>(null);
+
+  const [fullName, setFullName] = useState('Betul Citizen');
   const [age, setAge] = useState('35');
   const [gender, setGender] = useState<'male' | 'female' | 'other'>('male');
   const [occupation, setOccupation] = useState('farmer');
@@ -33,7 +94,7 @@ export function SchemesPage() {
   useEffect(() => {
     const p = profileData?.profile;
     if (!p) return;
-    setFullName(p.fullName ?? '');
+    if (p.fullName) setFullName(p.fullName);
     if (p.age !== undefined) setAge(String(p.age));
     if (p.gender) setGender(p.gender);
     if (p.occupation) setOccupation(p.occupation);
@@ -46,20 +107,20 @@ export function SchemesPage() {
   }, [profileData]);
 
   const checkMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (override?: Partial<CitizenProfile>) =>
       apiRequest<{ profile: CitizenProfile; matches: SchemeMatchResult[] }>('/schemes/profile', {
         method: 'PUT',
         body: JSON.stringify({
-          fullName: fullName || 'Betul Resident',
-          age: Number(age),
-          gender,
-          occupation,
-          educationLevel,
-          annualIncomeBand,
-          landholdingAcres: Number(landholdingAcres),
-          housingStatus,
-          bplCardHolder,
-          seekingEmployment,
+          fullName: override?.fullName ?? (fullName || 'Betul Citizen'),
+          age: override?.age ?? Number(age),
+          gender: override?.gender ?? gender,
+          occupation: override?.occupation ?? occupation,
+          educationLevel: override?.educationLevel ?? educationLevel,
+          annualIncomeBand: override?.annualIncomeBand ?? annualIncomeBand,
+          landholdingAcres: override?.landholdingAcres ?? Number(landholdingAcres),
+          housingStatus: override?.housingStatus ?? housingStatus,
+          bplCardHolder: override?.bplCardHolder ?? bplCardHolder,
+          seekingEmployment: override?.seekingEmployment ?? seekingEmployment,
           consentGiven: true,
         }),
       }),
@@ -86,24 +147,212 @@ export function SchemesPage() {
     },
   });
 
+  function applySmartAutoFill(sentence: string) {
+    const lower = sentence.toLowerCase();
+    const detected: string[] = [];
+    let nextOcc = occupation;
+    let nextLand = Number(landholdingAcres);
+    let nextHousing = housingStatus;
+    let nextGender = gender;
+    let nextEdu = educationLevel;
+    let nextSeek = seekingEmployment;
+    let nextBpl = bplCardHolder;
+    let nextAge = Number(age);
+
+    if (/(farmer|kisan|kheti|किसान)/i.test(lower)) {
+      nextOcc = 'farmer';
+      setOccupation('farmer');
+      detected.push('Occupation: Farmer');
+    }
+    const acreMatch = lower.match(/(\d+(?:\.\d+)?)\s*(?:acre|acres|एकड़)/i);
+    if (acreMatch) {
+      nextLand = Number(acreMatch[1]);
+      setLandholdingAcres(acreMatch[1]);
+      detected.push(`Land: ${acreMatch[1]} acres`);
+    }
+    if (/(kutcha|kaccha|ghar|makan|कच्चा)/i.test(lower)) {
+      nextHousing = 'kutcha';
+      setHousingStatus('kutcha');
+      detected.push('Housing: Kutcha House');
+    }
+    if (/(woman|mahila|female|behna|महिला)/i.test(lower)) {
+      nextGender = 'female';
+      setGender('female');
+      detected.push('Gender: Female');
+    }
+    if (/(graduate|graduation|degree|स्नातक)/i.test(lower)) {
+      nextEdu = 'graduate';
+      setEducationLevel('graduate');
+      detected.push('Education: Graduate');
+    }
+    if (/(job|employment|rojgar|naukri|skill|रोजगार)/i.test(lower)) {
+      nextSeek = true;
+      setSeekingEmployment(true);
+      detected.push('Seeking Employment');
+    }
+    if (/(bpl|ration|garib|बीपीएल)/i.test(lower)) {
+      nextBpl = true;
+      setBplCardHolder(true);
+      detected.push('BPL Card Holder');
+    }
+    const ageMatch = lower.match(/(\d{2})\s*(?:year|years|sal|saal|वर्ष)/i);
+    if (ageMatch) {
+      nextAge = Number(ageMatch[1]);
+      setAge(ageMatch[1]);
+      detected.push(`Age: ${ageMatch[1]}`);
+    }
+
+    setSmartHint(
+      detected.length > 0
+        ? `Auto-detected: ${detected.join(' • ')}. Matching schemes updated!`
+        : 'Updated your search. You can also tap any quick preset below.',
+    );
+
+    checkMutation.mutate({
+      occupation: nextOcc,
+      landholdingAcres: nextLand,
+      housingStatus: nextHousing,
+      gender: nextGender,
+      educationLevel: nextEdu,
+      seekingEmployment: nextSeek,
+      bplCardHolder: nextBpl,
+      age: nextAge,
+    });
+  }
+
+  function startVoiceSmartFill() {
+    const SpeechRec =
+      (window as unknown as Record<string, unknown>).SpeechRecognition ||
+      (window as unknown as Record<string, unknown>).webkitSpeechRecognition;
+    if (!SpeechRec) {
+      setSmartHint('Voice input unavailable in this browser. Type a short sentence above and click Auto-Fill.');
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rec = new (SpeechRec as any)();
+    rec.lang = lang === 'hi' ? 'hi-IN' : 'en-IN';
+    rec.interimResults = false;
+    setListening(true);
+    rec.onresult = (event: { results: Array<Array<{ transcript: string }>> }) => {
+      const spoken = event.results?.[0]?.[0]?.transcript ?? '';
+      setListening(false);
+      if (spoken) {
+        setSmartText(spoken);
+        applySmartAutoFill(spoken);
+      }
+    };
+    rec.onerror = () => setListening(false);
+    rec.onend = () => setListening(false);
+    rec.start();
+  }
+
+  function applyPersona(p: (typeof SMART_PERSONAS)[number]) {
+    setFullName(p.values.fullName);
+    setAge(p.values.age);
+    setGender(p.values.gender);
+    setOccupation(p.values.occupation);
+    setEducationLevel(p.values.educationLevel);
+    setAnnualIncomeBand(p.values.annualIncomeBand);
+    setLandholdingAcres(p.values.landholdingAcres);
+    setHousingStatus(p.values.housingStatus);
+    setBplCardHolder(p.values.bplCardHolder);
+    setSeekingEmployment(p.values.seekingEmployment);
+    setSmartHint(`Applied "${p.label}" preset — showing matching schemes automatically!`);
+    checkMutation.mutate({
+      fullName: p.values.fullName,
+      age: Number(p.values.age),
+      gender: p.values.gender,
+      occupation: p.values.occupation,
+      educationLevel: p.values.educationLevel,
+      annualIncomeBand: p.values.annualIncomeBand,
+      landholdingAcres: Number(p.values.landholdingAcres),
+      housingStatus: p.values.housingStatus,
+      bplCardHolder: p.values.bplCardHolder,
+      seekingEmployment: p.values.seekingEmployment,
+    });
+  }
+
+  const eligibleCount = matches.filter((m) => m.outcome === 'potentially_eligible').length;
+
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900">Citizen Benefits &amp; Scheme Eligibility</h2>
+        <h2 className="text-2xl font-bold text-slate-900">Smart Citizen Benefits &amp; Scheme Wizard</h2>
         <p className="text-sm text-slate-600 mt-1">
-          Enter simple household details to check eligibility against active Central and Madhya Pradesh schemes using deterministic official rules.
+          No need to type everything manually — speak 1 sentence in Hindi/English or pick a quick profile preset to see eligible schemes instantly.
         </p>
       </div>
 
-      {/* Simple Profile Form */}
+      {/* Step 1: Voice / 1-Sentence Smart Auto-Fill */}
+      <section className="bg-gradient-to-r from-[#0f2942] to-[#173b5e] text-white rounded-2xl p-5 space-y-4">
+        <div className="flex items-center gap-2 text-amber-300 text-xs font-bold uppercase tracking-wider">
+          <Wand2 size={14} /> Smart Auto-Suggest by Voice or 1 Sentence
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={startVoiceSmartFill}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+              listening ? 'bg-red-500 text-white' : 'bg-amber-500 hover:bg-amber-400 text-[#0f2942]'
+            }`}
+          >
+            {listening ? <MicOff size={15} /> : <Mic size={15} />}
+            {listening ? 'Listening...' : 'Speak Details'}
+          </button>
+          <input
+            value={smartText}
+            onChange={(e) => setSmartText(e.target.value)}
+            placeholder='Try: "Main kisan hoon, 2 acre zameen aur kutcha ghar hai" or "Graduate woman seeking job"'
+            className="flex-1 min-w-[220px] rounded-xl bg-white/10 border border-white/20 px-3.5 py-2 text-sm text-white placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-400"
+          />
+          <button
+            type="button"
+            onClick={() => applySmartAutoFill(smartText)}
+            className="px-4 py-2 rounded-xl bg-white text-[#0f2942] hover:bg-amber-50 text-xs font-bold"
+          >
+            Auto-Fill &amp; Suggest
+          </button>
+        </div>
+
+        {/* 1-Click Smart Persona Chips */}
+        <div className="grid sm:grid-cols-3 gap-2.5 pt-1">
+          {SMART_PERSONAS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => applyPersona(p)}
+              className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 transition"
+            >
+              <div className="text-xs font-bold text-white">{p.label}</div>
+              <div className="text-[11px] text-slate-200 mt-0.5">{p.desc}</div>
+            </button>
+          ))}
+        </div>
+
+        {smartHint && (
+          <div className="text-xs bg-emerald-500/20 border border-emerald-400/40 text-emerald-100 rounded-lg px-3 py-2">
+            {smartHint}
+          </div>
+        )}
+      </section>
+
+      {/* Step 2: Fine-Tune Profile (Quick Presets + Editable Fields) */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          checkMutation.mutate();
+          checkMutation.mutate(undefined);
         }}
         className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4"
       >
-        <h3 className="text-base font-semibold text-slate-900">1. Your Household Profile</h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-base font-semibold text-slate-900">Fine-Tune Your Details</h3>
+          {matches.length > 0 && (
+            <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold">
+              {eligibleCount} Potentially Eligible Scheme(s) Found
+            </span>
+          )}
+        </div>
+
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">Full Name</label>
@@ -111,7 +360,6 @@ export function SchemesPage() {
               required
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              placeholder="e.g., Ramesh Patel"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
           </div>
@@ -195,14 +443,26 @@ export function SchemesPage() {
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">Landholding (Acres)</label>
-            <input
-              type="number"
-              step="0.5"
-              min={0}
-              value={landholdingAcres}
-              onChange={(e) => setLandholdingAcres(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            />
+            <div className="flex gap-1.5">
+              <input
+                type="number"
+                step="0.5"
+                min={0}
+                value={landholdingAcres}
+                onChange={(e) => setLandholdingAcres(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+              {['0', '2', '5'].map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setLandholdingAcres(v)}
+                  className="px-2 rounded-lg border border-slate-200 text-xs font-medium hover:bg-slate-100"
+                >
+                  {v}ac
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -250,7 +510,7 @@ export function SchemesPage() {
       {matches.length > 0 && (
         <section className="space-y-3">
           <h3 className="text-base font-semibold text-slate-900">
-            2. Explainable Scheme Matches (Active Schemes Only)
+            Explainable Scheme Matches (Active Schemes Only)
           </h3>
           <div className="grid md:grid-cols-2 gap-4">
             {matches.map((m) => (
@@ -289,14 +549,14 @@ export function SchemesPage() {
 
                   {m.matchedConditions.length > 0 && (
                     <ul className="mt-2 space-y-0.5 text-xs text-emerald-700">
-                      {m.matchedConditions.map((c) => (
+                      {m.matchedConditions.map((c: string) => (
                         <li key={c}>✓ {c}</li>
                       ))}
                     </ul>
                   )}
                   {m.failedConditions.length > 0 && (
                     <ul className="mt-2 space-y-0.5 text-xs text-red-700">
-                      {m.failedConditions.map((c) => (
+                      {m.failedConditions.map((c: string) => (
                         <li key={c}>✗ {c}</li>
                       ))}
                     </ul>
