@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment files (never commit secrets)
+.env
+.env.local
+.env.*.local
+apps/api/.env
+apps/web/.env
+apps/ai-services/.env
+
+# Logs & temp
+*.log
+tmp/
+uploads/
+.DS_Store
+Thumbs.db

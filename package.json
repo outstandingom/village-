@@ -1,0 +1,24 @@
+{
+  "name": "betul-district-intelligence",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Betul District Intelligence & Citizen Benefit Platform",
+  "workspaces": [
+    "packages/*",
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "build:packages": "npm run build --workspace=@betul/shared-types && npm run build --workspace=@betul/validation && npm run build --workspace=@betul/ai-contracts",
+    "build": "npm run build:packages && npm run build --workspace=@betul/api && npm run build --workspace=@betul/web",
+    "dev:api": "npm run dev --workspace=@betul/api",
+    "dev:web": "npm run dev --workspace=@betul/web",
+    "test:api": "npm run test --workspace=@betul/api",
+    "test:web": "npm run test --workspace=@betul/web",
+    "test": "npm run test:api && npm run test:web",
+    "typecheck": "npm run build:packages && npm run typecheck --workspace=@betul/api && npm run typecheck --workspace=@betul/web"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
