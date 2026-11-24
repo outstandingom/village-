@@ -1,6 +1,15 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import type { LanguageCode, UserProfile } from '@betul/shared-types';
-import { apiRequest, getStoredToken, setStoredToken } from '../services/api';
+import type { LanguageCode, RegistrationTrack, SystemRole, UserProfile } from '@betul/shared-types';
+import {
+  apiRequest,
+  getStoredToken,
+  getStoredUser,
+  setStoredToken,
+  setStoredUser,
+  shouldUseRemoteApi,
+} from '../services/api';
+import { DEMO_USERS } from '../services/localFallback';
+import { supabase } from '../services/supabase';
 
 interface AuthContextValue {
   user: UserProfile | null;
@@ -14,55 +23,212 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function mapSupabaseUserToProfile(sbUser: {
+  id: string;
+  email?: string;
+  created_at?: string;
+  user_metadata?: Record<string, unknown>;
+}): UserProfile {
+  const meta = sbUser.user_metadata ?? {};
+  const track = (meta.track as RegistrationTrack) ?? 'citizen';
+  const isCitizen = track === 'citizen';
+  return {
+    id: sbUser.id,
+    email: sbUser.email ?? '',
+    fullName: String(meta.full_name ?? sbUser.email ?? 'Betul User'),
+    phone: typeof meta.phone === 'string' ? meta.phone : undefined,
+    track,
+    role: (meta.role as SystemRole) ?? 'citizen',
+    requestedDesignation:
+      typeof meta.requested_designation === 'string' ? meta.requested_designation : undefined,
+    verificationStatus: isCitizen ? 'approved' : 'pending_verification',
+    districtId: 'dist-betul-421',
+    departmentIds: [],
+    assignedVillageIds: ['vil-khedi'],
+    preferredLanguage: (meta.preferred_language as LanguageCode) ?? 'en',
+    createdAt: sbUser.created_at ?? new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [lang, setLang] = useState<LanguageCode>('en');
 
   useEffect(() => {
-    const token = getStoredToken();
-    if (!token) {
+    async function restoreSession() {
+      // 1. Check active Supabase Auth session first
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (data.session?.user) {
+          const profile = mapSupabaseUserToProfile(data.session.user);
+          setStoredToken(data.session.access_token);
+          setStoredUser(profile);
+          setUser(profile);
+          setLang(profile.preferredLanguage ?? 'en');
+          setLoading(false);
+          return;
+        }
+      } catch {
+        // ignore and check local/API session
+      }
+
+      // 2. Check Express API or saved demo session
+      const token = getStoredToken();
+      if (!token) {
+        setLoading(false);
+        return;
+      }
+
+      if (shouldUseRemoteApi()) {
+        try {
+          const res = await apiRequest<{ user: UserProfile }>('/auth/me');
+          setStoredUser(res.user);
+          setUser(res.user);
+          setLang(res.user.preferredLanguage ?? 'en');
+          setLoading(false);
+          return;
+        } catch {
+          setStoredToken(null);
+          setStoredUser(null);
+        }
+      } else {
+        const saved = getStoredUser();
+        if (saved) {
+          setUser(saved);
+          setLang(saved.preferredLanguage ?? 'en');
+        }
+      }
       setLoading(false);
-      return;
     }
-    apiRequest<{ user: UserProfile }>('/auth/me')
-      .then((res) => {
-        setUser(res.user);
-        setLang(res.user.preferredLanguage ?? 'en');
-      })
-      .catch(() => {
-        setStoredToken(null);
-        setUser(null);
-      })
-      .finally(() => setLoading(false));
+
+    void restoreSession();
   }, []);
 
   async function login(email: string, password: string): Promise<void> {
-    const res = await apiRequest<{ token: string; user: UserProfile }>('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
+    const emailLower = email.trim().toLowerCase();
+
+    // 1. If Express API is reachable locally/remotely, use it
+    if (shouldUseRemoteApi()) {
+      try {
+        const res = await apiRequest<{ token: string; user: UserProfile }>('/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({ email: emailLower, password }),
+        });
+        setStoredToken(res.token);
+        setStoredUser(res.user);
+        setUser(res.user);
+        setLang(res.user.preferredLanguage ?? 'en');
+        return;
+      } catch (err) {
+        // Fall through to Supabase Auth if API server is unreachable
+        if (!(err instanceof TypeError)) {
+          throw err;
+        }
+      }
+    }
+
+    // 2. Quick Demo Role Sign-In on static Vercel deployment
+    if (DEMO_USERS[emailLower] && password.startsWith('Betul')) {
+      const demoProfile = DEMO_USERS[emailLower];
+      setStoredToken(`demo-${demoProfile.id}`);
+      setStoredUser(demoProfile);
+      setUser(demoProfile);
+      setLang(demoProfile.preferredLanguage ?? 'en');
+      return;
+    }
+
+    // 3. Real Supabase Auth sign-in
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: emailLower,
+      password,
     });
-    setStoredToken(res.token);
-    setUser(res.user);
-    setLang(res.user.preferredLanguage ?? 'en');
+    if (error) {
+      throw new Error(error.message);
+    }
+    if (!data.user || !data.session) {
+      throw new Error('Sign in failed. Please verify your email and password.');
+    }
+
+    const profile = mapSupabaseUserToProfile(data.user);
+    setStoredToken(data.session.access_token);
+    setStoredUser(profile);
+    setUser(profile);
+    setLang(profile.preferredLanguage ?? 'en');
   }
 
   async function register(payload: Record<string, unknown>): Promise<string> {
-    const res = await apiRequest<{ token: string; user: UserProfile; message: string }>(
-      '/auth/register',
-      {
-        method: 'POST',
-        body: JSON.stringify(payload),
+    const email = String(payload.email ?? '').trim().toLowerCase();
+    const password = String(payload.password ?? '');
+    const fullName = String(payload.fullName ?? '').trim();
+    const phone = String(payload.phone ?? '').trim();
+    const track = (payload.track as RegistrationTrack) ?? 'citizen';
+    const requestedDesignation = payload.requestedDesignation
+      ? String(payload.requestedDesignation)
+      : undefined;
+    const preferredLanguage = (payload.preferredLanguage as LanguageCode) ?? 'en';
+
+    // 1. If Express API is reachable, register through API
+    if (shouldUseRemoteApi()) {
+      try {
+        const res = await apiRequest<{ token: string; user: UserProfile; message: string }>(
+          '/auth/register',
+          {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          },
+        );
+        setStoredToken(res.token);
+        setStoredUser(res.user);
+        setUser(res.user);
+        setLang(res.user.preferredLanguage ?? 'en');
+        return res.message;
+      } catch (err) {
+        if (!(err instanceof TypeError)) {
+          throw err;
+        }
+      }
+    }
+
+    // 2. Real Supabase Auth Sign Up (works directly on Vercel!)
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          full_name: fullName,
+          phone: phone || undefined,
+          track,
+          role: 'citizen', // Never self-grant privileged roles!
+          requested_designation: requestedDesignation,
+          preferred_language: preferredLanguage,
+        },
       },
-    );
-    setStoredToken(res.token);
-    setUser(res.user);
-    setLang(res.user.preferredLanguage ?? 'en');
-    return res.message;
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (data.session && data.user) {
+      const profile = mapSupabaseUserToProfile(data.user);
+      setStoredToken(data.session.access_token);
+      setStoredUser(profile);
+      setUser(profile);
+      setLang(profile.preferredLanguage ?? 'en');
+      return track === 'citizen'
+        ? 'Citizen account created and signed in via Supabase Auth!'
+        : 'Account created via Supabase Auth. Your government/field role is pending District Administration verification.';
+    }
+
+    return 'Account created in Supabase! Please check your email inbox to confirm your email address, then click Sign In.';
   }
 
   function logout(): void {
+    void supabase.auth.signOut();
     setStoredToken(null);
+    setStoredUser(null);
     setUser(null);
   }
 
