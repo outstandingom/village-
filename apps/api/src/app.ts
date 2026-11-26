@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -19,6 +20,7 @@ export function createApp() {
   const app = express();
 
   app.use(helmet());
+  app.use(compression());
   app.use(
     cors({
       origin: env.corsOrigin.split(',').map((o) => o.trim()),

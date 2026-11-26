@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 
 from app.document_processing.extractor import extract_document
@@ -13,6 +14,8 @@ app = FastAPI(
     title="Betul District AI & Document Processing Service",
     version="1.0.0",
 )
+
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 app.add_middleware(
     CORSMiddleware,

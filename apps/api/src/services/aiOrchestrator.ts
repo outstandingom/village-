@@ -38,7 +38,7 @@ async function callDeepSeekGrounded(params: {
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12_000);
+    const timer = setTimeout(() => controller.abort(), 8_000);
     const resp = await fetch(`${env.deepseekBaseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -48,7 +48,7 @@ async function callDeepSeekGrounded(params: {
       body: JSON.stringify({
         model: env.deepseekModel,
         temperature: 0.2,
-        max_tokens: 450,
+        max_tokens: 320,
         messages: [
           {
             role: 'system',
@@ -89,14 +89,27 @@ async function callDeepSeekGrounded(params: {
   }
 }
 
+// Fast-fail circuit breaker for Python AI service so offline/unreachable never adds 1.8s latency
+let pythonCircuitOpenUntil = 0;
+const PYTHON_COOLDOWN_MS = 30_000;
+const PYTHON_TIMEOUT_MS = 450;
+
+// Role-scoped response cache for repeated non-mutating queries (never shared across roles/users)
+const assistantCache = new Map<string, { expiresAt: number; response: AssistantResponse }>();
+const ASSISTANT_CACHE_TTL_MS = 30_000;
+
 export async function normalizeVoiceOrText(
   rawTranscript: string,
   languageHint: 'en' | 'hi' | 'hinglish' | 'auto' = 'auto',
 ): Promise<VoiceNormalizationResponse> {
-  // Try Python FastAPI AI service first; fall back cleanly to deterministic normalizer if offline
+  if (Date.now() < pythonCircuitOpenUntil) {
+    return localNormalizeTranscript(rawTranscript);
+  }
+
+  // Try Python FastAPI AI service with tight 450ms timeout; trip circuit breaker on failure
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 1800);
+    const timer = setTimeout(() => controller.abort(), PYTHON_TIMEOUT_MS);
     const resp = await fetch(`${env.aiServiceUrl}/api/v1/voice/normalize`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -107,8 +120,9 @@ export async function normalizeVoiceOrText(
     if (resp.ok) {
       return (await resp.json()) as VoiceNormalizationResponse;
     }
+    pythonCircuitOpenUntil = Date.now() + PYTHON_COOLDOWN_MS;
   } catch {
-    // Fallback below
+    pythonCircuitOpenUntil = Date.now() + PYTHON_COOLDOWN_MS;
   }
 
   return localNormalizeTranscript(rawTranscript);
@@ -405,7 +419,22 @@ export async function runAssistantQuery(params: {
     };
   }
 
-  // 2. Prompt injection / privilege escalation guard
+  // 2. Check per-user/role cache for identical recent queries
+  const cacheKey = `${params.user.id}:${params.user.role}:${params.language}:${params.message.trim().toLowerCase()}`;
+  const cached = assistantCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return {
+      ...cached.response,
+      conversationId,
+      telemetry: {
+        ...cached.response.telemetry,
+        latencyMs: Date.now() - started,
+        cacheHit: true,
+      },
+    };
+  }
+
+  // 3. Prompt injection / privilege escalation guard
   if (detectPromptInjection(params.message)) {
     store.addAudit({
       actorUserId: params.user.id,
@@ -763,7 +792,7 @@ export async function runAssistantQuery(params: {
   });
 
   if (deepseekResult) {
-    return {
+    const response: AssistantResponse = {
       conversationId,
       reply: deepseekResult.reply,
       intent: normalized.intent,
@@ -780,6 +809,11 @@ export async function runAssistantQuery(params: {
         cacheHit: false,
       },
     };
+    assistantCache.set(cacheKey, {
+      expiresAt: Date.now() + ASSISTANT_CACHE_TTL_MS,
+      response,
+    });
+    return response;
   }
 
   return {

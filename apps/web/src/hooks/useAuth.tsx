@@ -52,36 +52,21 @@ function mapSupabaseUserToProfile(sbUser: {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [lang, setLang] = useState<LanguageCode>('en');
+  const cachedUser = getStoredUser();
+  const [user, setUser] = useState<UserProfile | null>(cachedUser);
+  // Render immediately if a cached session exists; revalidate in background
+  const [loading, setLoading] = useState(!cachedUser && Boolean(getStoredToken()));
+  const [lang, setLang] = useState<LanguageCode>(cachedUser?.preferredLanguage ?? 'en');
 
   useEffect(() => {
     async function restoreSession() {
-      // 1. Check active Supabase Auth session first
-      try {
-        const { data } = await supabase.auth.getSession();
-        if (data.session?.user) {
-          const profile = mapSupabaseUserToProfile(data.session.user);
-          setStoredToken(data.session.access_token);
-          setStoredUser(profile);
-          setUser(profile);
-          setLang(profile.preferredLanguage ?? 'en');
-          setLoading(false);
-          return;
-        }
-      } catch {
-        // ignore and check local/API session
-      }
-
-      // 2. Check Express API or saved demo session
       const token = getStoredToken();
-      if (!token) {
+      if (!token && !cachedUser) {
         setLoading(false);
         return;
       }
 
-      if (shouldUseRemoteApi()) {
+      if (shouldUseRemoteApi() && token) {
         try {
           const res = await apiRequest<{ user: UserProfile }>('/auth/me');
           setStoredUser(res.user);
@@ -92,18 +77,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch {
           setStoredToken(null);
           setStoredUser(null);
+          setUser(null);
         }
-      } else {
-        const saved = getStoredUser();
-        if (saved) {
-          setUser(saved);
-          setLang(saved.preferredLanguage ?? 'en');
+      }
+
+      // Check Supabase Auth session in background
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (data.session?.user) {
+          const profile = mapSupabaseUserToProfile(data.session.user);
+          setStoredToken(data.session.access_token);
+          setStoredUser(profile);
+          setUser(profile);
+          setLang(profile.preferredLanguage ?? 'en');
         }
+      } catch {
+        // keep cached demo user if offline
       }
       setLoading(false);
     }
 
     void restoreSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function login(email: string, password: string): Promise<void> {
